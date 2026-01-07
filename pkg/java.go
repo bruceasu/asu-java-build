@@ -82,10 +82,10 @@ func JavacCompile(javaFiles []string, out string) error {
 
 	// 打印 javac 命令
 	fmt.Println("[INFO] javac command:")
-	fmt.Print("javac -d ", out, " -cp ", strings.Join(cp, string(os.PathListSeparator)), " @"+argsFile.Name())
+	fmt.Print("javac  -parameters -encoding utf-8 -d ", out, " -cp ", strings.Join(cp, string(os.PathListSeparator)), " @"+argsFile.Name())
 	fmt.Println()
 
-	cmd := exec.Command("javac", "-d", out, "-cp", strings.Join(cp, string(os.PathListSeparator)), "@"+argsFile.Name())
+	cmd := exec.Command("javac", "-parameters", "-encoding", "utf-8", "-d", out, "-cp", strings.Join(cp, string(os.PathListSeparator)), "@"+argsFile.Name())
 	outb, errb, err := Run(cmd)
 	if err != nil {
 		return fmt.Errorf("javac failed: %v\n%s\n%s", err, outb, errb)

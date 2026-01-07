@@ -39,10 +39,68 @@ func GenerateVSC(folder string) error {
 "java.project.sourcePaths": ["src"],
 "java.project.referencedLibraries": ["lib/**/*.jar"],
 "java.project.outputPath": "classes",
-"java.project.outputPathForJar": "bin"
+"java.project.outputPathForJar": "bin",
+"java.debug.settings.vmArgs": "-Dfile.encoding=UTF-8",
+"java.settings.compilerArgs": ["-encoding", "UTF-8", "-Xlint:unchecked", "-Xlint:deprecation", "-parameters"],
+"files.encoding": "utf8",
+"java.jdt.ls.vmargs": "-Dfile.encoding=UTF-8",
+
+ // 自动构建
+ "java.autobuild.enabled": true,
+ // 补全风格
+  "editor.suggest.snippetsPreventQuickSuggestions": false,
+  "java.completion.favoriteStaticMembers": [
+    "org.junit.Assert.*",
+    "org.mockito.Mockito.*",
+    "org.mockito.ArgumentMatchers.*"
+  ],
+   // 保存自动格式化
+  "editor.formatOnSave": true,
+  "java.format.settings.url": "https://raw.githubusercontent.com/google/styleguide/gh-pages/eclipse-java-google-style.xml",
+  "java.format.settings.profile": "GoogleStyle"
 }`
 	if err := os.WriteFile(settingsPath, []byte(settingsContent), 0644); err != nil {
 		return fmt.Errorf("failed to write settings.json: %w", err)
+	}
+
+	tasksPath := filepath.Join(baseDir, ".vscode", "tasks.json")
+	taskContent := `{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-java",
+      "type": "shell",
+      "command": "javac",
+      "args": [
+        "-encoding", "UTF-8",
+        "-d", "classes",
+        "src/main/java/**/*.java"
+      ],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$javac"
+    }
+  ]
+}`
+	if err := os.WriteFile(tasksPath, []byte(taskContent), 0644); err != nil {
+		return fmt.Errorf("failed to write tasks.json: %w", err)
+	}
+
+	launchPath := filepath.Join(baseDir, ".vscode", "launch.json")
+	launchContent := `{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run Main",
+      "request": "launch",
+      "mainClass": "com.example.Main",
+      "cwd": "${workspaceFolder}",
+      "vmArgs": "-Dfile.encoding=UTF-8"
+    }
+  ]
+}`
+	if err := os.WriteFile(launchPath, []byte(launchContent), 0644); err != nil {
+		return fmt.Errorf("failed to write launch.json: %w", err)
 	}
 
 	// Create sample Main.java

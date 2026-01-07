@@ -10,12 +10,13 @@ if "%~1" == "all" (
 	set GOOS=windows
 	:: amd64,  386
 	set GOARCH=amd64
+	set CGO_ENABLED=0
 	go build -o java-build.exe .
 	call cpFile.bat java-build.exe c:\green\jbuild.exe
 )
 
-:: GOOS=windows GOARCH=amd64 go build -o asu-java-build.exe .
-:: GOOS=linux GOARCH=amd64 go build -o asu-java-build-linux
+:: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o asu-java-build.exe .
+:: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o asu-java-build-linux
 :: gbuild
 cd /d %CWD%
 endlocal
