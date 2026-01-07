@@ -2,16 +2,21 @@
 setlocal
 set CWD=%CD%
 cd /d %~dp0
-if "%~1" == "all" (
-	go-build -project java-build
-	cpFile.bat bin\java-build-windows-amd64.exe c:\green\jbuild.exe
+
+if /i "%~1"=="all" (
+	call go-build -project java-build
+	call cpFile.bat bin\java-build-windows-amd64.exe c:\green\jbuild.exe
 ) else (
-	:: windows, linux, darwin
+	rem windows, linux, darwin
 	set GOOS=windows
-	:: amd64,  386
+
+	rem amd64, 386
 	set GOARCH=amd64
+
 	set CGO_ENABLED=0
-	go build -o java-build.exe .
+
+	go build -ldflags="-s -w" -v -o java-build.exe cmd\asu-java-build\main.go
+
 	call cpFile.bat java-build.exe c:\green\jbuild.exe
 )
 

@@ -277,26 +277,28 @@ func BuildJar(jarPath, classesDir, mainClass string, staticMode bool) error {
 
 // WriteManifest 写入 MANIFEST.MF 文件
 func WriteManifest(path, mainClass string, deps []string, staticMode bool) error {
+	//fmt.Println("Deps: ")
+	//fmt.Println(deps)
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "Manifest-Version: 1.0\r\n")
 	fmt.Fprintf(&buf, "Main-Class: %s\r\n", mainClass)
-
 	if !staticMode && len(deps) > 0 {
 		cpLine := "Class-Path:"
 		for _, d := range deps {
-			part := " lib/" + filepath.Base(d)
-			if len(cpLine)+len(part) > 70 { // 超过72要换行
+			part := "lib/" + filepath.Base(d)
+			// 检查加上空格和part后是否超长
+			if len(cpLine)+len(" ")+len(part) > 72 {
 				buf.WriteString(cpLine + "\r\n")
-				cpLine = " " + strings.TrimSpace(part) // 换行后必须空格开头
+				cpLine = " " + part // 换行后空格开头
 			} else {
-				cpLine += part
+				cpLine = cpLine + " " + part
 			}
 		}
 		buf.WriteString(cpLine + "\r\n")
 	}
 
 	buf.WriteString("\r\n") // manifest 结束必须有空行
-
+	//fmt.Printf("[INFO] Generated MANIFEST.MF(%s):\n%s\n", path, buf.String())
 	return os.WriteFile(path, buf.Bytes(), 0644)
 }
 
