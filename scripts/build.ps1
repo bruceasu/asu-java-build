@@ -131,23 +131,29 @@ function Invoke-CodeVet {
     go vet ./...
 }
 
-# Main execution
-switch ($Target.ToLower()) {
-    "help"      { Show-Help }
-    "deps"      { Install-Deps }
-    "install"   { Install-App }
-    "build"     { Invoke-Build }
-    "linux"     { Invoke-LinuxBuild }
-    "windows"   { Invoke-WindowsBuild }
-    "vet"       { Invoke-CodeVet }
-    "test"      { Invoke-Tests }
-    "run"       { Invoke-App }
-    "fmt"       { Format-Code }
-    "clean"     { Clear-Build }
-    default {
-        Write-Host "Unknown target: $Target" -ForegroundColor Red
-        Show-Help
-        exit 1
+Push-Location (Split-Path -Parent $PSScriptRoot)
+try {
+    
+    # Main execution
+    switch ($Target.ToLower()) {
+        "help"      { Show-Help }
+        "deps"      { Install-Deps }
+        "install"   { Install-App }
+        "build"     { Invoke-Build }
+        "linux"     { Invoke-LinuxBuild }
+        "windows"   { Invoke-WindowsBuild }
+        "vet"       { Invoke-CodeVet }
+        "test"      { Invoke-Tests }
+        "run"       { Invoke-App }
+        "fmt"       { Format-Code }
+        "clean"     { Clear-Build }
+        default {
+            Write-Host "Unknown target: $Target" -ForegroundColor Red
+            Show-Help
+            exit 1
+        }
     }
+} finally {
+    Pop-Location
 }
 

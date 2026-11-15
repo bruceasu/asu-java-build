@@ -917,6 +917,17 @@ asu-java-build -main com.example.Main -native -native-driver local
 | `-native-args` | Empty | Extra arguments to pass to `native-image` |
 | `-docker-image` | `ghcr.io/graalvm/native-image-community:21-ol9` | Docker image |
 
+#### Runtime Packaging Arguments (jlink + jpackage)
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-runtime` | `false` | Package runtime app-image (JDK 25) |
+| `-runtime-app-name` | JAR file name | App name passed to `jpackage --name` |
+| `-runtime-image-dir` | `<out>/runtime` | Output dir for `jlink` runtime image |
+| `-runtime-dist-dir` | `<out>/dist` | Output dir for `jpackage` app-image |
+| `-runtime-java-opts` | `-Xms256m;-Xmx1g` | Semicolon-separated JVM options for `jpackage` |
+| `-runtime-add-modules` | `jdk.unsupported,java.naming` | Extra modules appended to jlink modules |
+| `-runtime-win-console` | `true` | Enable `--win-console` on Windows |
+
 ### Usage Examples
 
 #### Example 1: Compile Single Java File
@@ -978,6 +989,15 @@ asu-java-build -main com.example.Main -native -native-driver local
 ```bash
 # Assuming you built target/myapp.jar with Maven
 asu-java-build -jar target/myapp.jar -native
+```
+
+#### Example 6.1: Package Runtime App-Image (JDK 25)
+
+```bash
+asu-java-build -jar target/myapp.jar -runtime \
+  -runtime-app-name myapp \
+  -runtime-main-class org.springframework.boot.loader.launch.JarLauncher \
+  -runtime-java-opts "-Xms256m;-Xmx1g;-DJASYPT_ENCRYPTOR_PASSWORD=fxtf-daily-stat-secret"
 ```
 
 #### Example 7: Build Fat JAR (with all dependencies)

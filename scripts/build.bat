@@ -1,7 +1,7 @@
 @echo off
 setlocal
 set CWD=%CD%
-cd /d %~dp0
+cd /d %~dp0..
 
 if /i "%~1"=="all" (
 	call go-build -project java-build
