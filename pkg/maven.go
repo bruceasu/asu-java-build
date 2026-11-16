@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/xml"
 	"fmt"
 	"io"
 	"io/fs"
@@ -153,9 +154,9 @@ func FindMavenCommand() string {
 // MavenCompile Maven 编译
 func MavenCompile() error {
 	mvnCmd := FindMavenCommand()
-	Info("[MAVEN] Compiling with: %s compile -DskipTests", mvnCmd)
+	Info("[MAVEN] Compiling with: %s clean compile -DskipTests", mvnCmd)
 
-	cmd := exec.Command(mvnCmd, "compile", "-DskipTests")
+	cmd := exec.Command(mvnCmd, "clean", "compile", "-DskipTests")
 	outb, errb, err := Run(cmd)
 	if err != nil {
 		return fmt.Errorf("Maven compile failed: %v\n%s\n%s", err, outb, errb)
@@ -167,6 +168,9 @@ func MavenCompile() error {
 func MavenCopyDependencies() error {
 	mvnCmd := FindMavenCommand()
 	Info("[MAVEN] Copying dependencies to target/lib")
+	if err := os.RemoveAll(filepath.Join("target", "lib")); err != nil {
+		return fmt.Errorf("clean copied Maven dependencies: %w", err)
+	}
 
 	cmd := exec.Command(mvnCmd,
 		"dependency:copy-dependencies",
@@ -185,24 +189,102 @@ func ExtractMainClassFromPom() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
-	content := string(data)
-
-	// 尝试匹配常见的主类配置模式
-	patterns := []string{
-		`<mainClass>([^<]+)</mainClass>`,
-		`<Main-Class>([^<]+)</Main-Class>`,
-		`<start-class>([^<]+)</start-class>`,
+	type pomProperty struct {
+		XMLName xml.Name
+		Value   string `xml:",chardata"`
 	}
-
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		if matches := re.FindStringSubmatch(content); len(matches) > 1 {
-			return strings.TrimSpace(matches[1]), nil
+	type pluginConfig struct {
+		MainClass string `xml:"mainClass"`
+		Archive   struct {
+			Manifest struct {
+				MainClass string `xml:"mainClass"`
+			} `xml:"manifest"`
+		} `xml:"archive"`
+	}
+	type pomPlugin struct {
+		GroupID       string       `xml:"groupId"`
+		ArtifactID    string       `xml:"artifactId"`
+		Configuration pluginConfig `xml:"configuration"`
+	}
+	var pom struct {
+		GroupID  string `xml:"groupId"`
+		Artifact string `xml:"artifactId"`
+		Version  string `xml:"version"`
+		Parent   struct {
+			GroupID string `xml:"groupId"`
+			Version string `xml:"version"`
+		} `xml:"parent"`
+		Properties struct {
+			Values []pomProperty `xml:",any"`
+		} `xml:"properties"`
+		Build struct {
+			Plugins []pomPlugin `xml:"plugins>plugin"`
+		} `xml:"build"`
+	}
+	if err := xml.Unmarshal(data, &pom); err != nil {
+		return "", fmt.Errorf("parse pom.xml: %w", err)
+	}
+	groupID := pom.GroupID
+	if groupID == "" {
+		groupID = pom.Parent.GroupID
+	}
+	properties := map[string]string{
+		"project.groupId":        groupID,
+		"groupId":                groupID,
+		"project.artifactId":     pom.Artifact,
+		"artifactId":             pom.Artifact,
+		"project.version":        pom.Version,
+		"version":                pom.Version,
+		"project.parent.version": pom.Parent.Version,
+	}
+	for _, property := range pom.Properties.Values {
+		properties[property.XMLName.Local] = strings.TrimSpace(property.Value)
+	}
+	mainClass := properties["start-class"]
+	if mainClass == "" {
+		mainClass = properties["mainClass"]
+	}
+	if mainClass == "" {
+		for _, plugin := range pom.Build.Plugins {
+			value := strings.TrimSpace(plugin.Configuration.MainClass)
+			if value == "" {
+				value = strings.TrimSpace(plugin.Configuration.Archive.Manifest.MainClass)
+			}
+			if value == "" {
+				continue
+			}
+			if plugin.ArtifactID == "spring-boot-maven-plugin" {
+				mainClass = value
+				break
+			}
+			if mainClass == "" {
+				mainClass = value
+			}
 		}
 	}
-
-	return "", nil
+	if mainClass == "" {
+		return "", nil
+	}
+	propertyRef := regexp.MustCompile(`\$\{([^}]+)\}`)
+	for range 10 {
+		unresolved := false
+		mainClass = propertyRef.ReplaceAllStringFunc(mainClass, func(reference string) string {
+			name := propertyRef.FindStringSubmatch(reference)[1]
+			value, ok := properties[name]
+			if !ok {
+				unresolved = true
+				return reference
+			}
+			return value
+		})
+		if !unresolved {
+			return strings.TrimSpace(mainClass), nil
+		}
+		if !strings.Contains(mainClass, "${") {
+			return strings.TrimSpace(mainClass), nil
+		}
+	}
+	return "", fmt.Errorf("main class contains unresolved Maven properties: %s", mainClass)
 }
 
 // BuildMavenJar 构建 Maven 普通 JAR（从 target/classes）
@@ -212,15 +294,8 @@ func BuildMavenJar(jarPath, mainClass string, expLib bool) error {
 		return fmt.Errorf("target/classes not found: %w", err)
 	}
 
-	// 在普通模式下，如果没有 target/lib，需要先复制依赖
+	// 如果 target/lib 尚不存在（例如没有声明运行时依赖），运行时依赖列表为空。
 	libDir := "target/lib"
-	if _, err := os.Stat(libDir); os.IsNotExist(err) {
-		// 在非 expLib 模式下，也需要复制依赖以便 Class-Path 能找到
-		if err := MavenCopyDependencies(); err != nil {
-			// 如果复制失败，警告但不失败
-			Info("[MAVEN] Warning: Could not copy dependencies: %v", err)
-		}
-	}
 
 	// 收集依赖（用于生成 Class-Path）
 	var deps []string
@@ -274,9 +349,14 @@ func BuildMavenJar(jarPath, mainClass string, expLib bool) error {
 	}
 
 	// 如果有依赖，复制到输出目录的 lib/（即使不是 expLib 模式，也需要复制以便 Class-Path 能找到）
+	outLibDir := filepath.Join(filepath.Dir(jarPath), "lib")
+	if err := os.RemoveAll(outLibDir); err != nil {
+		return fmt.Errorf("clean output dependencies: %w", err)
+	}
 	if len(deps) > 0 {
-		outLibDir := filepath.Join(filepath.Dir(jarPath), "lib")
-		os.MkdirAll(outLibDir, 0755)
+		if err := os.MkdirAll(outLibDir, 0755); err != nil {
+			return fmt.Errorf("create output dependency directory: %w", err)
+		}
 
 		for _, dep := range deps {
 			destFile := filepath.Join(outLibDir, filepath.Base(dep))
@@ -356,7 +436,7 @@ func BuildMavenProject(
 	}
 
 	if mainClass == "" {
-		Info("[HINT] Main class not specified. Set -main com.example.Main if you want a runnable JAR/native.")
+		Info("[HINT] Main class not specified. Set -main com.example.Main if you want a runnable JAR.")
 	}
 
 	// 确保输出目录存在
@@ -391,7 +471,10 @@ func BuildMavenProject(
 			}
 			Ok("[MAVEN] Built JAR with external dependencies: %s", jarPath)
 		} else {
-			// 普通模式：只打包项目代码
+			// 普通模式：复制当前依赖图后打包项目代码。
+			if err := MavenCopyDependencies(); err != nil {
+				return "", "", err
+			}
 			if err := BuildMavenJar(jarPath, mainClass, expLib); err != nil {
 				return "", "", err
 			}

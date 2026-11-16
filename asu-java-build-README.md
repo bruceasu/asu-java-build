@@ -13,9 +13,6 @@
 - ✅ 编译 Java 源代码（支持递归扫描源文件）
 - ✅ **自动检测和构建 Maven 项目**
 - ✅ 打包可运行的 JAR 文件（普通/Fat JAR/依赖导出）
-- ✅ 使用 GraalVM Native Image 构建原生二进制文件
-- ✅ 支持 Docker 容器构建 Linux 原生镜像（跨平台）
-- ✅ 支持本地 GraalVM 构建原生镜像
 - ✅ **快速生成 IDE 项目**（VS Code/Eclipse/IntelliJ IDEA/Maven/Spring Boot）
 
 ### 特性
@@ -34,8 +31,6 @@
   - 支持导出依赖到 `lib/` 目录
   - 自动合并 `META-INF/services/` 文件（SPI 支持）
   - Maven 坐标自动解析和下载（Maven Central）
-- **跨平台原生构建**：通过 Docker 在 Windows/Mac 上构建 Linux 原生镜像
-- **本地原生构建**：支持使用本机 GraalVM 构建原生镜像
 - **IDE 项目生成**：
   - VS Code Java 项目（带 settings.json 和示例代码）
   - Eclipse 项目（.project 和 .classpath）
@@ -43,18 +38,13 @@
   - Maven 项目（通过 maven-archetype-quickstart）
   - Spring Boot 项目（通过 spring initializr CLI）
   - 自动初始化 Git 仓库和 .gitignore
-- **自定义参数**：支持传递额外参数给 `native-image`
 
 ### 前置要求
 
 #### 基础构建（Java 编译 + JAR）
 - JDK 8 或更高版本（需要 `javac` 和 `jar` 命令在 PATH 中）
 
-#### Docker 原生构建
-- Docker Desktop（用于 `-native -native-driver docker`）
 
-#### 本地原生构建
-- GraalVM（需要安装 `native-image` 组件）
 
 ### 快速开始
 
@@ -62,15 +52,15 @@
 
 ```bash
 # Windows
-go build -o asu-java-build.exe .
+go build  -ldflags="-s -w"  -o asu-java-build.exe .
 
 # Linux/Mac
-go build -o asu-java-build .
+go build  -ldflags="-s -w"  -o asu-java-build .
 
 # 交叉编译（在 Windows 上构建 Linux 版本）
 set GOOS=linux
 set GOARCH=amd64
-go build -o asu-java-build-linux .
+go build  -ldflags="-s -w"  -o asu-java-build-linux .
 ```
 
 #### 2. 基本用法
@@ -88,14 +78,8 @@ asu-java-build
 # 场景 C：多文件项目（指定主类）
 asu-java-build -main com.example.Main
 
-# 场景 D：使用现有 JAR 构建原生镜像
-asu-java-build -jar target/myapp.jar -native
 
-# 场景 E：从源码一步到位构建原生镜像（Linux via Docker）
-asu-java-build -main com.example.Main -native
 
-# 场景 F：本地构建原生镜像（需要本机安装 GraalVM）
-asu-java-build -main com.example.Main -native -native-driver local
 ```
 
 ### 命令行参数
@@ -118,10 +102,10 @@ asu-java-build -main com.example.Main -native -native-driver local
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `-src` | `src` | Java 源码目录（递归扫描） |
-| `-out` | `bin` | 输出目录（.class/JAR/native） |
+| `-out` | `bin` | 输出目录（.class/JAR/runtime app-image） |
 | `-main` | 自动推断 | 主类全限定名（如 `com.example.Main`） |
 | `-jarname` | `app.jar` | 可运行 JAR 文件名 |
-| `-nojar` | `false` | 不创建 JAR（将禁用原生构建） |
+| `-nojar` | `false` | 不创建 JAR（此时不能生成 runtime app-image） |
 
 #### 依赖管理参数
 | 参数 | 默认值 | 说明 |
@@ -134,15 +118,16 @@ asu-java-build -main com.example.Main -native -native-driver local
 |------|--------|------|
 | `-jar` | 空 | 使用现有 JAR 文件（跳过 javac/jar 阶段） |
 
-#### 原生构建参数
+#### Runtime app-image 参数（jlink + jpackage）
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `-native` | `false` | 在 JAR 准备好后构建原生镜像 |
-| `-native-driver` | `docker` | 构建方式：`docker` 或 `local` |
-| `-native-target` | `linux` | Docker 构建目标系统：`linux` 或 `windows` |
-| `-native-name` | `app-linux-amd64` | 原生二进制文件名 |
-| `-native-args` | 空 | 传递给 `native-image` 的额外参数 |
-| `-docker-image` | `ghcr.io/graalvm/native-image-community:21-ol9` | Docker 镜像 |
+| `-runtime` | `false` | 生成精简运行时 app-image（需要 JDK 25） |
+| `-runtime-app-name` | JAR 文件名 | jpackage 使用的应用名称 |
+| `-runtime-main-class` | 自动推断 | jpackage 启动主类；默认使用构建主类或 JAR manifest |
+| `-runtime-image-dir` | `<out>/runtime` | `jlink` 运行时输出目录 |
+| `-runtime-dist-dir` | `<out>/dist` | `jpackage` app-image 输出目录 |
+| `-runtime-java-opts` | `-Xms256m;-Xmx1g` | 分号分隔的 JVM 参数 |
+| `-runtime-add-modules` | `jdk.unsupported,java.naming` | 额外加入 jlink 的模块 |
 
 ### 使用示例
 
@@ -168,43 +153,6 @@ bin/
 
 ```bash
 asu-java-build -main com.example.Main -jarname myapp.jar
-```
-
-#### 示例 3：构建 Linux 原生镜像（通过 Docker）
-
-```bash
-asu-java-build -main com.example.Main -native
-
-# 产物：bin/app-linux-amd64
-# 在 WSL2/Linux 中运行：
-chmod +x bin/app-linux-amd64
-./bin/app-linux-amd64
-```
-
-#### 示例 4：使用自定义 Docker 镜像和参数
-
-```bash
-asu-java-build -main com.example.Main -native \
-  -docker-image ghcr.io/graalvm/native-image-community:21-ol9-20250121 \
-  -native-name myapp \
-  -native-args "-Ob --no-fallback -march=native"
-```
-
-#### 示例 5：本地构建原生镜像
-
-```bash
-# 需要先安装 GraalVM 并将 native-image 添加到 PATH
-asu-java-build -main com.example.Main -native -native-driver local
-
-# Windows 产物：bin/app-windows-amd64.exe
-# Linux 产物：bin/app-linux-amd64
-```
-
-#### 示例 6：使用现有 JAR 构建原生镜像
-
-```bash
-# 假设你用 Maven 构建了 target/myapp.jar
-asu-java-build -jar target/myapp.jar -native
 ```
 
 #### 示例 7：构建 Fat JAR（包含所有依赖）
@@ -437,16 +385,6 @@ asu-java-build -main com.example.Main -static
 # 产物：bin/app.jar（包含所有依赖）
 ```
 
-#### 示例 19：Maven 项目 - 构建原生镜像
-
-```bash
-cd my-maven-project
-asu-java-build -main com.example.Main -static -native
-
-# 先构建 Fat JAR，再构建原生镜像
-# 产物：bin/app-linux-amd64
-```
-
 #### 示例 20：从 pom.xml 自动读取主类
 
 ```xml
@@ -492,7 +430,6 @@ asu-java-build -static
 | **普通 JAR** | `asu-java-build -main com.example.Main` | `bin/app.jar`<br>`bin/lib/*.jar` | 开发测试 |
 | **导出依赖** | `asu-java-build -main com.example.Main -explib` | `bin/app.jar`<br>`bin/lib/*.jar` | 生产部署（多文件） |
 | **Fat JAR** | `asu-java-build -main com.example.Main -static` | `bin/app.jar` | 生产部署（单文件）<br>容器化 |
-| **原生镜像** | `asu-java-build -main com.example.Main -static -native` | `bin/app-linux-amd64` | 无 JVM 部署<br>高性能场景 |
 
 #### 普通 JAR 模式
 
@@ -536,7 +473,6 @@ asu-java-build -main com.example.Main -static
 优点：
 - 单文件部署
 - 无需外部依赖
-- 适合容器化和原生镜像构建
 
 #### 主类配置
 
@@ -582,7 +518,6 @@ asu-java-build -static  # 无需 -main 参数
 | 打包 | `mvn package` | 自动打包到 `bin/` |
 | Fat JAR | 需要配置 Shade Plugin | 使用 `-static` 参数 |
 | 依赖导出 | 需要配置 Dependency Plugin | 自动复制到 `bin/lib/` |
-| 原生镜像 | 需要配置 Native Maven Plugin | 使用 `-native` 参数 |
 | 速度 | 完整生命周期 | 仅编译和打包（跳过测试）|
 
 ### 依赖管理
@@ -690,30 +625,6 @@ asu-java-build/
     └── bin/             # 编译输出目录
 ```
 
-### 与 Maven 结合使用
-
-```bash
-# 1. 使用 Maven 构建 JAR
-mvn clean package
-
-# 2. 使用本工具构建原生镜像
-asu-java-build -jar target/myapp.jar -native
-```
-
-### 与 GraalVM Agent 配合
-
-如果需要生成反射/资源配置：
-
-```bash
-# 1. 在 Windows/Mac 上使用 GraalVM Agent 运行
-java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image \
-  -jar app.jar
-
-# 2. 配置文件会生成在 src/main/resources/META-INF/native-image/
-# 3. 使用本工具构建原生镜像时会自动拾取这些配置
-asu-java-build -jar app.jar -native
-```
-
 ### 故障排查
 
 #### 问题：`javac` 或 `jar` 命令未找到
@@ -726,18 +637,6 @@ set PATH=%JAVA_HOME%\bin;%PATH%
 # Linux/Mac
 export PATH=$JAVA_HOME/bin:$PATH
 ```
-
-#### 问题：Docker 构建失败
-**解决方案**：
-- 确保 Docker Desktop 正在运行
-- 检查网络连接（需要拉取 Docker 镜像）
-- 尝试手动拉取镜像：`docker pull ghcr.io/graalvm/native-image-community:21-ol9`
-
-#### 问题：本地原生构建失败
-**解决方案**：
-- 确保已安装 GraalVM
-- 安装 `native-image` 组件：`gu install native-image`
-- 验证：`native-image --version`
 
 #### 问题：Maven 依赖下载失败
 **解决方案**：
@@ -786,9 +685,6 @@ export PATH=$JAVA_HOME/bin:$PATH
 - ✅ Compile Java source code (with recursive source file scanning)
 - ✅ **Automatically detect and build Maven projects**
 - ✅ Package runnable JAR files (Normal/Fat JAR/Export Dependencies)
-- ✅ Build native binaries using GraalVM Native Image
-- ✅ Support Docker-based Linux native image building (cross-platform)
-- ✅ Support local GraalVM native image building
 - ✅ **Quickly generate IDE projects** (VS Code/Eclipse/IntelliJ IDEA/Maven/Spring Boot)
 
 ### Features
@@ -807,8 +703,6 @@ export PATH=$JAVA_HOME/bin:$PATH
   - Supports exporting dependencies to `lib/` directory
   - Automatically merges `META-INF/services/` files (SPI support)
   - Maven coordinate auto-resolution and download (Maven Central)
-- **Cross-platform Native Builds**: Build Linux native images on Windows/Mac via Docker
-- **Local Native Builds**: Support building native images using local GraalVM
 - **IDE Project Generation**:
   - VS Code Java projects (with settings.json and sample code)
   - Eclipse projects (.project and .classpath)
@@ -816,18 +710,13 @@ export PATH=$JAVA_HOME/bin:$PATH
   - Maven projects (via maven-archetype-quickstart)
   - Spring Boot projects (via spring initializr CLI)
   - Auto-initialize Git repository and .gitignore
-- **Custom Arguments**: Pass extra arguments to `native-image`
 
 ### Prerequisites
 
 #### Basic Build (Java Compilation + JAR)
 - JDK 8 or higher (requires `javac` and `jar` commands in PATH)
 
-#### Docker Native Build
-- Docker Desktop (for `-native -native-driver docker`)
 
-#### Local Native Build
-- GraalVM (requires `native-image` component installed)
 
 ### Quick Start
 
@@ -861,14 +750,8 @@ asu-java-build
 # Scenario C: Multi-file project (specify main class)
 asu-java-build -main com.example.Main
 
-# Scenario D: Build native image from existing JAR
-asu-java-build -jar target/myapp.jar -native
 
-# Scenario E: Build native image from source (Linux via Docker)
-asu-java-build -main com.example.Main -native
 
-# Scenario F: Local native build (requires GraalVM installed)
-asu-java-build -main com.example.Main -native -native-driver local
 ```
 
 ### Command Line Arguments
@@ -891,10 +774,10 @@ asu-java-build -main com.example.Main -native -native-driver local
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-src` | `src` | Java source directory (recursive scan) |
-| `-out` | `bin` | Output directory (.class/JAR/native) |
+| `-out` | `bin` | Output directory (.class/JAR/runtime app-image) |
 | `-main` | Auto-inferred | Main class FQCN (e.g. `com.example.Main`) |
 | `-jarname` | `app.jar` | Runnable JAR file name |
-| `-nojar` | `false` | Do not create JAR (disables native build) |
+| `-nojar` | `false` | Do not create JAR (runtime packaging requires a JAR) |
 
 #### Dependency Management Arguments
 | Flag | Default | Description |
@@ -907,21 +790,12 @@ asu-java-build -main com.example.Main -native -native-driver local
 |------|---------|-------------|
 | `-jar` | Empty | Use existing JAR file (skip javac/jar phase) |
 
-#### Native Build Arguments
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-native` | `false` | Build native image after JAR is ready |
-| `-native-driver` | `docker` | Build method: `docker` or `local` |
-| `-native-target` | `linux` | Target OS for Docker build: `linux` or `windows` |
-| `-native-name` | `app-linux-amd64` | Native binary name |
-| `-native-args` | Empty | Extra arguments to pass to `native-image` |
-| `-docker-image` | `ghcr.io/graalvm/native-image-community:21-ol9` | Docker image |
-
 #### Runtime Packaging Arguments (jlink + jpackage)
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-runtime` | `false` | Package runtime app-image (JDK 25) |
 | `-runtime-app-name` | JAR file name | App name passed to `jpackage --name` |
+| `-runtime-main-class` | Auto-detected | Main class for jpackage; defaults to the build main class or JAR manifest |
 | `-runtime-image-dir` | `<out>/runtime` | Output dir for `jlink` runtime image |
 | `-runtime-dist-dir` | `<out>/dist` | Output dir for `jpackage` app-image |
 | `-runtime-java-opts` | `-Xms256m;-Xmx1g` | Semicolon-separated JVM options for `jpackage` |
@@ -954,50 +828,13 @@ bin/
 asu-java-build -main com.example.Main -jarname myapp.jar
 ```
 
-#### Example 3: Build Linux Native Image (via Docker)
-
-```bash
-asu-java-build -main com.example.Main -native
-
-# Output: bin/app-linux-amd64
-# Run in WSL2/Linux:
-chmod +x bin/app-linux-amd64
-./bin/app-linux-amd64
-```
-
-#### Example 4: Custom Docker Image and Arguments
-
-```bash
-asu-java-build -main com.example.Main -native \
-  -docker-image ghcr.io/graalvm/native-image-community:21-ol9-20250121 \
-  -native-name myapp \
-  -native-args "-Ob --no-fallback -march=native"
-```
-
-#### Example 5: Local Native Build
-
-```bash
-# Requires GraalVM installed with native-image in PATH
-asu-java-build -main com.example.Main -native -native-driver local
-
-# Windows output: bin/app-windows-amd64.exe
-# Linux output: bin/app-linux-amd64
-```
-
-#### Example 6: Build Native Image from Existing JAR
-
-```bash
-# Assuming you built target/myapp.jar with Maven
-asu-java-build -jar target/myapp.jar -native
-```
-
 #### Example 6.1: Package Runtime App-Image (JDK 25)
 
 ```bash
 asu-java-build -jar target/myapp.jar -runtime \
   -runtime-app-name myapp \
   -runtime-main-class org.springframework.boot.loader.launch.JarLauncher \
-  -runtime-java-opts "-Xms256m;-Xmx1g;-DJASYPT_ENCRYPTOR_PASSWORD=fxtf-daily-stat-secret"
+  -runtime-java-opts "-Xms256m;-Xmx1g"
 ```
 
 #### Example 7: Build Fat JAR (with all dependencies)
@@ -1230,16 +1067,6 @@ asu-java-build -main com.example.Main -static
 # Output: bin/app.jar (includes all dependencies)
 ```
 
-#### Example 19: Maven Project - Build Native Image
-
-```bash
-cd my-maven-project
-asu-java-build -main com.example.Main -static -native
-
-# Build Fat JAR first, then native image
-# Output: bin/app-linux-amd64
-```
-
 #### Example 20: Auto-read Main Class from pom.xml
 
 ```xml
@@ -1285,7 +1112,6 @@ Priority order:
 | **Regular JAR** | `asu-java-build -main com.example.Main` | `bin/app.jar`<br>`bin/lib/*.jar` | Development/Testing |
 | **Export Dependencies** | `asu-java-build -main com.example.Main -explib` | `bin/app.jar`<br>`bin/lib/*.jar` | Production (multi-file) |
 | **Fat JAR** | `asu-java-build -main com.example.Main -static` | `bin/app.jar` | Production (single file)<br>Containerization |
-| **Native Image** | `asu-java-build -main com.example.Main -static -native` | `bin/app-linux-amd64` | No JVM deployment<br>High performance |
 
 #### Regular JAR Mode
 
@@ -1329,7 +1155,6 @@ Execution flow:
 Benefits:
 - Single-file deployment
 - No external dependencies required
-- Perfect for containerization and native image builds
 
 #### Main Class Configuration
 
@@ -1375,7 +1200,6 @@ asu-java-build -static  # No -main flag needed
 | Package | `mvn package` | Auto-packages to `bin/` |
 | Fat JAR | Requires Shade Plugin config | Use `-static` flag |
 | Export Dependencies | Requires Dependency Plugin config | Auto-copies to `bin/lib/` |
-| Native Image | Requires Native Maven Plugin config | Use `-native` flag |
 | Speed | Full lifecycle | Compile and package only (skip tests) |
 
 ### Dependency Management
@@ -1483,30 +1307,6 @@ asu-java-build/
     └── bin/             # Compilation output directory
 ```
 
-### Integration with Maven
-
-```bash
-# 1. Build JAR with Maven
-mvn clean package
-
-# 2. Build native image with this tool
-asu-java-build -jar target/myapp.jar -native
-```
-
-### Working with GraalVM Agent
-
-To generate reflection/resource configurations:
-
-```bash
-# 1. Run with GraalVM Agent on Windows/Mac
-java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image \
-  -jar app.jar
-
-# 2. Configuration files will be generated in src/main/resources/META-INF/native-image/
-# 3. These configurations will be automatically picked up when building native image
-asu-java-build -jar app.jar -native
-```
-
 ### Troubleshooting
 
 #### Issue: `javac` or `jar` command not found
@@ -1519,18 +1319,6 @@ set PATH=%JAVA_HOME%\bin;%PATH%
 # Linux/Mac
 export PATH=$JAVA_HOME/bin:$PATH
 ```
-
-#### Issue: Docker build fails
-**Solution**:
-- Ensure Docker Desktop is running
-- Check network connection (required to pull Docker image)
-- Try manually pulling the image: `docker pull ghcr.io/graalvm/native-image-community:21-ol9`
-
-#### Issue: Local native build fails
-**Solution**:
-- Ensure GraalVM is installed
-- Install `native-image` component: `gu install native-image`
-- Verify: `native-image --version`
 
 #### Issue: Maven dependency download fails
 **Solution**:

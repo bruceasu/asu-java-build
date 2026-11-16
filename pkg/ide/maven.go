@@ -135,82 +135,9 @@ func GenerateMaven(folder string, findMavenCommand func() string) error {
 		return fmt.Errorf("failed to read pom.xml: %w", err)
 	}
 
-	pomStr := string(pomBytes)
-
-	// 更新 Java 版本
-	pomStr = strings.ReplaceAll(pomStr, "<maven.compiler.source>1.7</maven.compiler.source>",
-		fmt.Sprintf("<maven.compiler.source>%s</maven.compiler.source>", javaVersion))
-	pomStr = strings.ReplaceAll(pomStr, "<maven.compiler.target>1.7</maven.compiler.target>",
-		fmt.Sprintf("<maven.compiler.target>%s</maven.compiler.target>", javaVersion))
-
-	// 在 </build> 之前添加自定义插件配置
-	if !strings.Contains(pomStr, "<plugins>") || !strings.Contains(pomStr, "</plugins>") {
-		// 如果没有 <plugins> 标签，添加整个 plugins 块
-		pluginsBlock := fmt.Sprintf(`  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.11.0</version>
-        <configuration>
-          <source>%s</source>
-          <target>%s</target>
-          <encoding>UTF-8</encoding>
-          <parameters>true</parameters>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <version>3.3.0</version>
-        <configuration>
-          <archive>
-            <manifest>
-              <addClasspath>true</addClasspath>
-              <classpathPrefix>lib/</classpathPrefix>
-              <mainClass>${project.groupId}.App</mainClass>
-            </manifest>
-          </archive>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>`, javaVersion, javaVersion)
-		pomStr = strings.ReplaceAll(pomStr, "</build>", pluginsBlock)
-	} else {
-		// 如果已有 <plugins>，在 </plugins> 前添加我们的插件
-		compilerPlugin := fmt.Sprintf(`      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.11.0</version>
-        <configuration>
-          <source>%s</source>
-          <target>%s</target>
-          <encoding>UTF-8</encoding>
-          <parameters>true</parameters>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <version>3.3.0</version>
-        <configuration>
-          <archive>
-            <manifest>
-              <addClasspath>true</addClasspath>
-              <classpathPrefix>lib/</classpathPrefix>
-              <mainClass>${project.groupId}.App</mainClass>
-            </manifest>
-          </archive>
-        </configuration>
-      </plugin>
-    </plugins>`, javaVersion, javaVersion)
-
-		// 在 </pluginManagement> 后添加 <plugins>
-		if strings.Contains(pomStr, "</pluginManagement>") {
-			pomStr = strings.ReplaceAll(pomStr, "</pluginManagement>", "</pluginManagement>\n    <plugins>\n"+compilerPlugin)
-		} else {
-			pomStr = strings.ReplaceAll(pomStr, "</plugins>", compilerPlugin+"</plugins>")
-		}
+	pomStr, err := configureMavenPom(string(pomBytes), groupId+".App", javaVersion)
+	if err != nil {
+		return fmt.Errorf("configure generated pom.xml: %w", err)
 	}
 
 	if err := os.WriteFile(pomPath, []byte(pomStr), 0644); err != nil {

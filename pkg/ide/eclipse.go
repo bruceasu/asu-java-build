@@ -2,8 +2,10 @@ package ide
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bruceasu/asu-java-build/pkg"
 )
@@ -58,13 +60,32 @@ func GenerateEclipse(folder string) error {
 
 	// Create .classpath
 	classpathPath := filepath.Join(baseDir, ".classpath")
-	classpathContent := `<?xml version="1.0" encoding="UTF-8"?>
+	var classpath strings.Builder
+	classpath.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <classpath>
 	<classpathentry kind="src" path="src"/>
-	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
-	<classpathentry kind="lib" path="lib"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>`)
+	err := filepath.WalkDir(filepath.Join(baseDir, "lib"), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".jar") {
+			return nil
+		}
+		relative, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&classpath, "\n\t<classpathentry kind=\"lib\" path=\"%s\"/>", escapeXML(filepath.ToSlash(relative)))
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to scan library directory: %w", err)
+	}
+	classpath.WriteString(`
 	<classpathentry kind="output" path="classes"/>
-</classpath>`
+</classpath>`)
+	classpathContent := classpath.String()
 	if err := os.WriteFile(classpathPath, []byte(classpathContent), 0644); err != nil {
 		return fmt.Errorf("failed to write .classpath: %w", err)
 	}

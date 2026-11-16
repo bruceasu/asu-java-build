@@ -74,7 +74,8 @@ func GenerateVSC(folder string) error {
       "args": [
         "-encoding", "UTF-8",
         "-d", "classes",
-        "src/main/java/**/*.java"
+        "-sourcepath", "src",
+        "src/Main.java"
       ],
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": "$javac"
@@ -93,7 +94,7 @@ func GenerateVSC(folder string) error {
       "type": "java",
       "name": "Run Main",
       "request": "launch",
-      "mainClass": "com.example.Main",
+      "mainClass": "Main",
       "cwd": "${workspaceFolder}",
       "vmArgs": "-Dfile.encoding=UTF-8"
     }

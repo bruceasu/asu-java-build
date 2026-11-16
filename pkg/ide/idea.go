@@ -26,7 +26,7 @@ func GenerateIdea(folder string) error {
 	}
 
 	// Create directories
-	dirs := []string{filepath.Join(baseDir, ".idea"), filepath.Join(baseDir, "src"), filepath.Join(baseDir, "lib"), filepath.Join(baseDir, "classes"), filepath.Join(baseDir, "bin")}
+	dirs := []string{filepath.Join(baseDir, ".idea", "libraries"), filepath.Join(baseDir, "src"), filepath.Join(baseDir, "lib"), filepath.Join(baseDir, "classes"), filepath.Join(baseDir, "bin")}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
@@ -37,12 +37,27 @@ func GenerateIdea(folder string) error {
 	miscPath := filepath.Join(baseDir, ".idea", "misc.xml")
 	miscContent := `<?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="ProjectRootManager" version="2" languageLevel="JDK_11" project-jdk-name="11" project-jdk-type="JavaSDK">
+  <component name="ProjectRootManager" version="2">
     <output url="file://$PROJECT_DIR$/classes" />
   </component>
 </project>`
 	if err := os.WriteFile(miscPath, []byte(miscContent), 0644); err != nil {
 		return fmt.Errorf("failed to write misc.xml: %w", err)
+	}
+
+	libraryPath := filepath.Join(baseDir, ".idea", "libraries", "lib.xml")
+	libraryContent := `<?xml version="1.0" encoding="UTF-8"?>
+<component name="libraryTable">
+  <library name="lib">
+    <CLASSES>
+      <jarDirectory url="file://$PROJECT_DIR$/lib" recursive="true" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>`
+	if err := os.WriteFile(libraryPath, []byte(libraryContent), 0644); err != nil {
+		return fmt.Errorf("failed to write library config: %w", err)
 	}
 
 	// Create .idea/modules.xml

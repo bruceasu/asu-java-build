@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,11 +121,17 @@ func detectModules(jarPath, jarDir string) (string, error) {
 		"--print-module-deps",
 	}
 
-	libs, _ := filepath.Glob(filepath.Join(jarDir, "lib", "*.jar"))
+	libs, analysisJar, cleanup, err := collectRuntimeDependencyJars(jarPath, jarDir)
+	if err != nil {
+		return "", err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if len(libs) > 0 {
 		args = append(args, "--class-path", strings.Join(libs, string(os.PathListSeparator)))
 	}
-	args = append(args, jarPath)
+	args = append(args, analysisJar)
 
 	out, errb, err := Run(exec.Command("jdeps", args...))
 	if err != nil {
@@ -138,6 +146,135 @@ func detectModules(jarPath, jarDir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("jdeps returned empty module list")
+}
+
+func collectRuntimeDependencyJars(jarPath, jarDir string) ([]string, string, func(), error) {
+	var jars []string
+	libDir := filepath.Join(jarDir, "lib")
+	err := filepath.WalkDir(libDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if os.IsNotExist(walkErr) {
+			return nil
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(path), ".jar") {
+			jars = append(jars, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("scan external runtime dependencies: %w", err)
+	}
+
+	archive, err := zip.OpenReader(jarPath)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("open application JAR for module analysis: %w", err)
+	}
+	var nested []*zip.File
+	var appClasses []*zip.File
+	for _, file := range archive.File {
+		name := strings.ToUpper(filepath.ToSlash(file.Name))
+		if strings.HasSuffix(name, ".JAR") && (strings.HasPrefix(name, "BOOT-INF/LIB/") || strings.HasPrefix(name, "WEB-INF/LIB/") || strings.HasPrefix(name, "LIB/")) {
+			nested = append(nested, file)
+		}
+		if strings.HasSuffix(name, ".CLASS") && (strings.HasPrefix(name, "BOOT-INF/CLASSES/") || strings.HasPrefix(name, "WEB-INF/CLASSES/")) {
+			appClasses = append(appClasses, file)
+		}
+	}
+	if len(nested) == 0 && len(appClasses) == 0 {
+		if err := archive.Close(); err != nil {
+			return nil, "", nil, fmt.Errorf("close application JAR: %w", err)
+		}
+		return jars, jarPath, nil, nil
+	}
+	tempDir, err := os.MkdirTemp("", "asu-jdeps-deps-")
+	if err != nil {
+		archive.Close()
+		return nil, "", nil, fmt.Errorf("create nested dependency workspace: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir) }
+	for i, file := range nested {
+		rc, err := file.Open()
+		if err != nil {
+			archive.Close()
+			cleanup()
+			return nil, "", nil, fmt.Errorf("open nested dependency %s: %w", file.Name, err)
+		}
+		name := fmt.Sprintf("%04d-%s", i, filepath.Base(file.Name))
+		path := filepath.Join(tempDir, name)
+		out, err := os.Create(path)
+		if err == nil {
+			_, err = io.Copy(out, rc)
+			if closeErr := out.Close(); err == nil {
+				err = closeErr
+			}
+		}
+		rc.Close()
+		if err != nil {
+			archive.Close()
+			cleanup()
+			return nil, "", nil, fmt.Errorf("extract nested dependency %s: %w", file.Name, err)
+		}
+		jars = append(jars, path)
+	}
+	analysisJar := jarPath
+	if len(appClasses) > 0 {
+		appJarPath := filepath.Join(tempDir, "application-classes.jar")
+		appJar, err := os.Create(appJarPath)
+		if err != nil {
+			archive.Close()
+			cleanup()
+			return nil, "", nil, fmt.Errorf("create extracted application classes JAR: %w", err)
+		}
+		zipWriter := zip.NewWriter(appJar)
+		for _, file := range appClasses {
+			entryName := filepath.ToSlash(file.Name)
+			for _, prefix := range []string{"BOOT-INF/classes/", "WEB-INF/classes/"} {
+				if strings.HasPrefix(strings.ToUpper(entryName), strings.ToUpper(prefix)) {
+					entryName = entryName[len(prefix):]
+					break
+				}
+			}
+			rc, err := file.Open()
+			if err != nil {
+				zipWriter.Close()
+				appJar.Close()
+				archive.Close()
+				cleanup()
+				return nil, "", nil, fmt.Errorf("open application class %s: %w", file.Name, err)
+			}
+			writer, err := zipWriter.Create(entryName)
+			if err == nil {
+				_, err = io.Copy(writer, rc)
+			}
+			rc.Close()
+			if err != nil {
+				zipWriter.Close()
+				appJar.Close()
+				archive.Close()
+				cleanup()
+				return nil, "", nil, fmt.Errorf("copy application class %s: %w", file.Name, err)
+			}
+		}
+		if err := zipWriter.Close(); err != nil {
+			appJar.Close()
+			archive.Close()
+			cleanup()
+			return nil, "", nil, fmt.Errorf("finish extracted application classes JAR: %w", err)
+		}
+		if err := appJar.Close(); err != nil {
+			archive.Close()
+			cleanup()
+			return nil, "", nil, fmt.Errorf("close extracted application classes JAR: %w", err)
+		}
+		analysisJar = appJarPath
+	}
+	if err := archive.Close(); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("close application JAR: %w", err)
+	}
+	return jars, analysisJar, cleanup, nil
 }
 
 func splitJavaOptions(v string) []string {

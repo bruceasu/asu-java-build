@@ -61,8 +61,31 @@ func InferMainFromSingle(srcRoot, onlyFile string) (string, error) {
 	return fqcn, nil
 }
 
+func findJavaSourceForClass(javaFiles []string, className string) string {
+	className = strings.TrimSpace(className)
+	if className == "" {
+		return ""
+	}
+	if i := strings.IndexByte(className, '$'); i >= 0 {
+		className = className[:i]
+	}
+	for _, source := range javaFiles {
+		baseName := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
+		qualifiedName := baseName
+		if data, err := os.ReadFile(source); err == nil {
+			if match := pkgRe.FindSubmatch(data); len(match) == 2 {
+				qualifiedName = string(match[1]) + "." + baseName
+			}
+		}
+		if qualifiedName == className {
+			return source
+		}
+	}
+	return ""
+}
+
 // JavacCompile 编译 Java 源文件
-func JavacCompile(javaFiles []string, out string) error {
+func JavacCompile(javaFiles []string, out string, deps []string) error {
 	argsFile, err := os.CreateTemp("", "javac-sources-*.txt")
 	if err != nil {
 		return fmt.Errorf("create temp args file: %w", err)
@@ -76,7 +99,6 @@ func JavacCompile(javaFiles []string, out string) error {
 		return err
 	}
 
-	deps := CollectDeps()
 	cp := []string{out}
 	cp = append(cp, deps...)
 
@@ -106,7 +128,6 @@ func BuildJavaProject(
 	if len(javaFiles) == 0 {
 		return "", "", fmt.Errorf("no .java files under %q", srcDir)
 	}
-
 	// 推断/获取主类
 	mainClass = strings.TrimSpace(mainFQCN)
 	if mainClass == "" {
@@ -118,8 +139,19 @@ func BuildJavaProject(
 			mainClass = mc
 			Info("[MAIN] Single source; inferred main: %s", mainClass)
 		} else {
-			Info("[HINT] Multiple source files detected. Set -main com.example.Main if you want a runnable JAR/native.")
+			Info("[HINT] Multiple source files detected. Set -main com.example.Main if you want a runnable JAR.")
 		}
+	}
+	dependencySources := javaFiles
+	if mainSource := findJavaSourceForClass(javaFiles, mainClass); mainSource != "" {
+		dependencySources = []string{mainSource}
+	}
+	deps, cleanupDeps, err := CollectDeps(dependencySources)
+	if err != nil {
+		return "", "", err
+	}
+	if cleanupDeps != nil {
+		defer cleanupDeps()
 	}
 
 	// 创建输出目录
@@ -131,7 +163,7 @@ func BuildJavaProject(
 	os.MkdirAll(classesDir, 0755)
 
 	// 编译
-	if err := JavacCompile(javaFiles, classesDir); err != nil {
+	if err := JavacCompile(javaFiles, classesDir, deps); err != nil {
 		return "", "", err
 	}
 	Ok("Compiled %d source file(s) to %s", len(javaFiles), classesDir)
@@ -139,7 +171,7 @@ func BuildJavaProject(
 	// 打 JAR（可选）
 	if !skipJar && mainClass != "" {
 		jarPath = filepath.Join(outDir, jarName)
-		if err := BuildJar(jarPath, classesDir, mainClass, staticMode); err != nil {
+		if err := BuildJar(jarPath, classesDir, mainClass, staticMode, deps); err != nil {
 			return "", "", err
 		}
 		Ok("Built runnable JAR: %s", jarPath)
@@ -154,7 +186,6 @@ func BuildJavaProject(
 
 	// 导出依赖
 	if expLib {
-		deps := CollectDeps()
 		CopyExplib(outDir, deps)
 	}
 
@@ -162,8 +193,9 @@ func BuildJavaProject(
 }
 
 // CollectDeps 收集依赖：lib/**/*.jar + dep.lib
-func CollectDeps() []string {
+func CollectDeps(javaFiles []string) ([]string, func(), error) {
 	var deps []string
+	var mavenSpecs []MavenDependency
 
 	// 1. lib/**/*.jar
 	filepath.WalkDir("lib", func(p string, d fs.DirEntry, err error) error {
@@ -184,14 +216,8 @@ func CollectDeps() []string {
 				continue
 			}
 
-			// Maven 坐标格式: groupId:artifactId:version
-			if IsMavenCoordinate(line) {
-				jarPath, err := ResolveMavenDependency(line)
-				if err != nil {
-					fmt.Printf("[WARN] failed to resolve Maven dependency %s: %v\n", line, err)
-				} else {
-					deps = append(deps, jarPath)
-				}
+			if spec, ok := ParseMavenDependency(line); ok {
+				mavenSpecs = append(mavenSpecs, spec)
 				continue
 			}
 
@@ -219,18 +245,35 @@ func CollectDeps() []string {
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			return nil, nil, fmt.Errorf("read dep.lib: %w", err)
+		}
 	}
+
+	for _, source := range javaFiles {
+		declarations, err := ReadJavaDependencyDirectives(source)
+		if err != nil {
+			return nil, nil, err
+		}
+		mavenSpecs = append(mavenSpecs, declarations.Maven...)
+		deps = append(deps, declarations.Jars...)
+	}
+
+	resolved, cleanup, err := ResolveMavenDependencies(mavenSpecs)
+	if err != nil {
+		return nil, nil, err
+	}
+	deps = append(deps, resolved...)
 
 	fmt.Println("[INFO] Collected dependencies:")
 	for _, d := range deps {
 		fmt.Println("   ", d)
 	}
-	return deps
+	return deps, cleanup, nil
 }
 
 // BuildJar 构建 JAR 文件
-func BuildJar(jarPath, classesDir, mainClass string, staticMode bool) error {
-	deps := CollectDeps()
+func BuildJar(jarPath, classesDir, mainClass string, staticMode bool, deps []string) error {
 	manifest, err := os.CreateTemp("", "MANIFEST-*.mf")
 	if err != nil {
 		return fmt.Errorf("create manifest: %w", err)

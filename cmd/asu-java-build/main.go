@@ -13,25 +13,18 @@ import (
 
 var (
 	srcDir   = flag.String("src", "src", "Java source directory (recursive)")
-	outDir   = flag.String("out", "bin", "Output directory for .class/JAR/native")
+	outDir   = flag.String("out", "bin", "Output directory for .class/JAR/runtime app-image")
 	mainFQCN = flag.String("main", "", "Main class FQCN (e.g. com.example.Main). If omitted and only one source exists, it will be inferred.")
 	jarName  = flag.String("jarname", "app.jar", "Runnable JAR name when main class is known")
 
 	staticMode = flag.Bool("static", false, "Package dependencies inside JAR (fat-jar, like shade plugin)")
 	expLib     = flag.Bool("explib", false, "Export dependencies to lib/ folder next to the JAR")
-	skipJar    = flag.Bool("nojar", false, "Do not create JAR (will disable native build)")
+	skipJar    = flag.Bool("nojar", false, "Do not create JAR (runtime packaging requires a JAR)")
 	inputJar   = flag.String("jar", "", "Use an existing JAR instead of compiling sources (skip javac/jar)")
 
-	nativeEnable = flag.Bool("native", false, "Build a native image after JAR is ready")
-	nativeDriver = flag.String("native-driver", "docker", "native builder: docker | local")
-	nativeTarget = flag.String("native-target", "linux", "target OS for native when using docker: linux | windows (windows image rarely used)")
-	nativeName   = flag.String("native-name", "", "native binary name (default: app-<os>-amd64)")
-	nativeArgs   = flag.String("native-args", "", "extra args to pass to native-image (e.g. '-Ob -march=native')")
-	dockerImage  = flag.String("docker-image", "ghcr.io/graalvm/native-image-community:21-ol9", "Docker image for linux native build")
-
-	runtimeEnable  = flag.Bool("runtime", false, "Package app-image runtime using jlink+jpackage (requires JDK 25)")
-	runtimeAppName = flag.String("runtime-app-name", "", "Application name for jpackage (default: JAR file name without .jar)")
-	//runtimeMainClass  = flag.String("runtime-main-class", "", "Main class for jpackage (default: use built/inferred main class, then JAR manifest)")
+	runtimeEnable     = flag.Bool("runtime", false, "Package app-image runtime using jlink+jpackage (requires JDK 25)")
+	runtimeAppName    = flag.String("runtime-app-name", "", "Application name for jpackage (default: JAR file name without .jar)")
+	runtimeMainClass  = flag.String("runtime-main-class", "", "Main class for jpackage (default: use built/inferred main class, then JAR manifest)")
 	runtimeImageDir   = flag.String("runtime-image-dir", "", "Output directory for jlink runtime image (default: <out>/runtime)")
 	runtimeDistDir    = flag.String("runtime-dist-dir", "", "Output directory for jpackage app-image (default: <out>/dist)")
 	runtimeJavaOpts   = flag.String("runtime-java-opts", "-Xms256m;-Xmx1g", "Semicolon-separated java options for jpackage")
@@ -99,9 +92,6 @@ func main() {
 		jarPath = mustAbs(*inputJar)
 		resolvedMainClass = strings.TrimSpace(*mainFQCN)
 		info("[JAR] Using existing JAR: %s", jarPath)
-		if *nativeEnable && *skipJar {
-			fail(errors.New("-nojar conflicts with -jar input; remove -nojar when using -jar"))
-		}
 	} else if isMavenProject {
 		var err error
 		jarPath, resolvedMainClass, err = pkg.BuildMavenProject(
@@ -126,7 +116,10 @@ func main() {
 		if strings.TrimSpace(jarPath) == "" {
 			fail(errors.New("-runtime requires a JAR. Please provide -jar or remove -nojar"))
 		}
-		mainClassForRuntime := strings.TrimSpace(*mainFQCN)
+		mainClassForRuntime := strings.TrimSpace(*runtimeMainClass)
+		if mainClassForRuntime == "" {
+			mainClassForRuntime = strings.TrimSpace(*mainFQCN)
+		}
 		if mainClassForRuntime == "" {
 			mainClassForRuntime = resolvedMainClass
 		}
@@ -141,12 +134,6 @@ func main() {
 			*runtimeAddModules,
 			*runtimeWinConsole,
 		); err != nil {
-			fail(err)
-		}
-	}
-
-	if *nativeEnable {
-		if err := pkg.BuildNative(jarPath, *outDir, *nativeName, *nativeArgs, *dockerImage, *nativeDriver, *nativeTarget); err != nil {
 			fail(err)
 		}
 	}
